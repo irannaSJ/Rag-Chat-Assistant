@@ -1,0 +1,13 @@
+numpy
+requests
+pickle-mixin
+PyPDF2
+beautifulsoup4
+sentence-transformers
+transformers
+torch
+faiss-cpu
+fastapi
+uvicorn
+python-multipart
+streamlit
