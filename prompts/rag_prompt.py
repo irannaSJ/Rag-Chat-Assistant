@@ -1,64 +1,64 @@
-def build_rag_prompt(query:str, retrieved_chunks:list) -> str:
-    context_blocks = []
+MAX_CHUNK_CHARS = 1200
+
+
+def _format_source_label(meta: dict) -> str:
+    source_name = meta.get("source_name", "Unknown Source")
+    source_type = meta.get("source_type", "")
+
+    if source_type == "PDF" and "page" in meta:
+        return f"{source_name} (p. {meta['page']})"
+    if source_type == "WEBSITE" and meta.get("url"):
+        return f"{source_name} ({meta['url']})"
+    return source_name
+
+
+def format_sources(retrieved_chunks: list[dict]) -> list[dict]:
+    """Return deduplicated source metadata for frontend citation badges."""
+    seen = set()
+    sources = []
 
     for chunk in retrieved_chunks:
         meta = chunk["metadata"]
-        source_info = []
-    
-        if "source_type" in meta:
-            source_info.append(meta["source_type"])
-        if "page" in meta:
-            source_info.append(f"page {meta['page']}")
-        if "url" in meta:
-            source_info.append(meta["url"])
+        label = _format_source_label(meta)
+        if label in seen:
+            continue
+        seen.add(label)
+        sources.append({
+            "label": label,
+            "source_name": meta.get("source_name", "Unknown Source"),
+            "source_type": meta.get("source_type", "UNKNOWN"),
+            "page": meta.get("page"),
+            "url": meta.get("url"),
+            "score": round(chunk.get("score", 0.0), 3),
+        })
 
-        source_line = " | ".join(source_info)
+    return sources
 
-        # context_blocks.append(
-        #     f"[Source : {source_line}] \n {chunk['chunk_text']}"
-        # )
-        MAX_CHUNK_CHARS = 800
 
+def build_rag_prompt(query: str, retrieved_chunks: list[dict]) -> str:
+    context_blocks = []
+
+    for chunk in retrieved_chunks:
+        label = _format_source_label(chunk["metadata"])
         trimmed_text = chunk["chunk_text"][:MAX_CHUNK_CHARS]
-        context_blocks.append(
-            f"[Source: {source_line}]\n {trimmed_text}"
-        )
+        context_blocks.append(f"\n{trimmed_text}")
 
-    context_text = "\n\n".join(context_blocks)
+    context_text = "\n\n---\n\n".join(context_blocks)
 
-    # prompt = f"""
-    # You are a helpful assistant.
-    # Answer the question ONLY using the context below.
-    # If the answer is not present in the context, say:
-    # "I dont't know based on the provided information."
+    prompt = f"""Answer the user's question using ONLY the context provided below.
 
-    # Context:
-    # {context_text}
-    prompt = f"""
-    You are an AI assistant answering questions using ONLY the provided context.
+Guidelines:
+- Ground every claim strictly in the provided context. Do not use outside knowledge.
+- Use clear, well-structured Markdown (short paragraphs, bullet points, or bold key terms where helpful).
+- Cite the source inline when referencing facts (e.g., [Document.pdf, p. 2]).
+- If the context does not contain enough information to answer the question, reply with:
+  "I couldn't find enough information in your uploaded sources to answer that."
 
-    Rules you MUST follow:
-    - Use only the information in the context.
-    - Do NOT use prior knowledge.
-    - If the context does not contain the answer, say:
-    "I don't know based on the provided information."
-    - Do NOT mention that you are an AI or language model.
+Context:
+{context_text}
 
-    Answering style:
-    - Be clear and concise.
-    - If the question asks for an explanation, answer in structured points.
-    - If multiple facts are relevant, combine them logically.
-    - The context may be partial: focus on the most relevant details.
-
-
-
-    Context:
-    {context_text}
-
-    Question:
-    {query}
-
-    Answer:
-    """.strip()
+Question:
+{query}
+""".strip()
 
     return prompt

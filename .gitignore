@@ -1,0 +1,20 @@
+# Secrets & environment
+.env
+.env.*
+
+# Local uploaded documents & FAISS index
+data/
+
+# Python virtual environments & bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Node / Vite build outputs
+frontend/node_modules/
+frontend/dist/
+
+# OS & editor files
+.DS_Store
+.vscode/

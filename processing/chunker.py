@@ -1,96 +1,97 @@
-# def chunk_text(
-#     text:str,
-#     metadata:dict,
-#     chunk_size:int=500,
-#     overlap:int =100):
-#     chunks = []
-#     start = 0
-#     chunk_id = 0
-#     text_length = len(text)
-
-#     while start < text_length:
-#         end = start + chunk_size
-#         chunk = text[start:end]
-
-#         if chunk.strip():
-#             chunk_metadata = metadata.copy()
-#             chunk_metadata["chunk_id"] = chunk_id
-
-#             chunks.append({
-#                 "chunk_text":chunk,
-#                 "metadata":chunk_metadata
-#             })
-
-#             chunk_id +=1
-#             start +=chunk_size-overlap
-#     return chunks
+import re
 
 
-from transformers import AutoTokenizer
+def _token_len(text: str) -> int:
+    """Fast subword token estimate (~1.3 tokens per word)."""
+    words = re.findall(r"\S+", text)
+    return max(1, int(len(words) * 1.3))
 
-TOKENIZER_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-try:
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME)
-except Exception:
-    tokenizer = None
+def _split_segments(text: str) -> list[str]:
+    """Split text into paragraphs first, breaking oversized paragraphs into sentences."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    segments: list[str] = []
 
-def _fallback_chunk_text(text: str, metadata: dict, chunk_size: int, overlap: int):
-    chunks = []
-    start = 0
-    chunk_id = 0
-    step = max(chunk_size - overlap, 1)
+    for para in paragraphs:
+        if _token_len(para) <= 200:
+            segments.append(para)
+        else:
+            sentences = re.split(r"(?<=[.!?])\s+", para)
+            segments.extend(s.strip() for s in sentences if s.strip())
 
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
+    return segments
 
-        if chunk.strip():
-            chunk_metadata = metadata.copy()
-            chunk_metadata["chunk_id"] = chunk_id
-            chunks.append({
-                "chunk_text": chunk,
-                "metadata": chunk_metadata,
-            })
-            chunk_id += 1
 
-        start += step
+def _hard_split_by_words(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Fallback splitter for single huge blocks without punctuation."""
+    words = text.split()
+    max_words = max(int(chunk_size / 1.3), 1)
+    overlap_words = max(int(overlap / 1.3), 0)
+    step = max(max_words - overlap_words, 1)
 
-    return chunks
+    pieces = []
+    for start in range(0, len(words), step):
+        piece = " ".join(words[start : start + max_words]).strip()
+        if piece:
+            pieces.append(piece)
+    return pieces
+
 
 def chunk_text(
-    text:str,
-    metadata :dict,
-    chunk_size : int = 256,
-    overlap : int =50
-    ):
-    """
-    Token-aware chunking
-    """
-    if tokenizer is None:
-        return _fallback_chunk_text(text, metadata, chunk_size * 4, overlap * 4)
+    text: str,
+    metadata: dict,
+    chunk_size: int = 256,
+    overlap: int = 40,
+) -> list[dict]:
+    """Paragraph & sentence-aware chunking with overlap."""
+    if not text or not text.strip():
+        return []
 
-    tokens = tokenizer.encode(text,add_special_tokens=False)
+    segments = _split_segments(text)
+    raw_chunks: list[str] = []
+    current_segments: list[str] = []
+    current_tokens = 0
+
+    for seg in segments:
+        seg_tokens = _token_len(seg)
+
+        if seg_tokens > chunk_size:
+            if current_segments:
+                raw_chunks.append("\n\n".join(current_segments))
+                current_segments = []
+                current_tokens = 0
+            raw_chunks.extend(_hard_split_by_words(seg, chunk_size, overlap))
+            continue
+
+        if current_tokens + seg_tokens > chunk_size and current_segments:
+            raw_chunks.append("\n\n".join(current_segments))
+
+            overlap_segments: list[str] = []
+            overlap_tokens = 0
+            for prev_seg in reversed(current_segments):
+                prev_len = _token_len(prev_seg)
+                if overlap_tokens + prev_len <= overlap:
+                    overlap_segments.insert(0, prev_seg)
+                    overlap_tokens += prev_len
+                else:
+                    break
+
+            current_segments = overlap_segments
+            current_tokens = overlap_tokens
+
+        current_segments.append(seg)
+        current_tokens += seg_tokens
+
+    if current_segments:
+        raw_chunks.append("\n\n".join(current_segments))
+
     chunks = []
-    start = 0
-    chunk_id = 0
+    for chunk_id, chunk_str in enumerate(raw_chunks):
+        chunk_metadata = metadata.copy()
+        chunk_metadata["chunk_id"] = chunk_id
+        chunks.append({
+            "chunk_text": chunk_str,
+            "metadata": chunk_metadata,
+        })
 
-
-    while start<len(tokens):
-        end = start+chunk_size
-        chunk_tokens = tokens[start:end]
-
-        chunk_text = tokenizer.decode(chunk_tokens)
-        if chunk_text.strip():
-            chunk_metadata = metadata.copy()
-            chunk_metadata["chunk_id"] = chunk_id
-
-            chunks.append({
-                "chunk_text":chunk_text,
-                "metadata":chunk_metadata
-            })
-
-            chunk_id +=1
-
-        start +=chunk_size - overlap
     return chunks

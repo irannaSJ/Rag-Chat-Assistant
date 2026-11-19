@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_SYSTEM_PYTHON=1 \
+    FASTEMBED_CACHE_PATH=/app/.cache/fastembed
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY pyproject.toml ./
+RUN uv pip install --no-cache -r pyproject.toml
+
+# Pre-download lightweight ONNX model (~65 MB)
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+
+COPY api ./api
+COPY embeddings ./embeddings
+COPY ingestion ./ingestion
+COPY llm ./llm
+COPY processing ./processing
+COPY prompts ./prompts
+COPY retriever ./retriever
+COPY vectorstore ./vectorstore
+
+RUN mkdir -p /app/data
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
